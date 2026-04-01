@@ -25,14 +25,12 @@ void sensorsInit() {
         ina219.begin();
     }
 
-    // 2. Init BMI160 
-    // Folosim adresa 0x68 (standard)
+    // 2. Init BMI160
     if (BMI160.begin(BMI160GenClass::I2C_MODE, 0x68)) {
-        // 1. Viteza maximă de comunicare
         BMI160.setAccelerometerRange(2);
         BMI160.setGyroRange(250);
-        
-        // 2. Calibrare precisă (media pe 100 de citiri)
+
+        // Calibrare precisă (media pe 100 de citiri)
         float sR = 0, sP = 0;
         for(int i = 0; i < 100; i++) {
             int ax, ay, az;
@@ -43,13 +41,12 @@ void sensorsInit() {
         }
         rollOffset = sR / 100.0;
         pitchOffset = sP / 100.0;
-        
         lastMicros = micros();
         getBmi160State().status = "online";
     }
 }
 
-void sensorsUpdate() {
+void sensorsUpdateSlow() {
     TelemetryState& t = getTelemetryState();
     ComponentState& ntc = getNtcState();
     ComponentState& ina = getIna219State();
@@ -62,7 +59,6 @@ void sensorsUpdate() {
             float steinhart = log(resistance / NTC_R_NOMINAL) / NTC_B_COEF;
             steinhart += 1.0 / (NTC_T_NOMINAL + 273.15);
             float currentT = (1.0 / steinhart) - 273.15;
-
             filteredTemp = (TEMP_ALFA * currentT) + (1.0 - TEMP_ALFA) * filteredTemp;
             t.temperatureC = filteredTemp;
             ntc.status = "online";
@@ -74,13 +70,14 @@ void sensorsUpdate() {
         t.voltageV = ina219.getBusVoltage_V();
         t.currentmA = ina219.getCurrent_mA();
         
-        // Calcul procent baterie (Calibrat pt Li-Ion)
         float pct = ((t.voltageV - BATTERY_VOLTAGE_MIN) / (BATTERY_VOLTAGE_MAX - BATTERY_VOLTAGE_MIN)) * 100.0f;
         t.batteryPercent = (int)constrain(pct, 0, 100);
-        
         ina.status = "online";
     }
-    //---- LOGICA BMI160 (ACCELEROMETRU) ---
+}
+
+void sensorsUpdateFast() {
+    //---- LOGICA BMI160 ---
     if (getBmi160State().status != "online") return;
 
     int ax, ay, az, gx, gy, gz;
@@ -88,27 +85,21 @@ void sensorsUpdate() {
     float dt = (now - lastMicros) / 1000000.0f;
     lastMicros = now;
 
-    // Citire separately (accelerometer și gyroscope)
     BMI160.readAccelerometer(ax, ay, az);
     BMI160.readGyro(gx, gy, gz);
 
-    // 1. Calcul Accelerometru (Corectat cu Offset)
     float accRoll = (atan2(ay, az) * 180.0 / M_PI) - rollOffset;
     float accPitch = (atan2(-ax, sqrt((float)ay * ay + (float)az * az)) * 180.0 / M_PI) - pitchOffset;
 
-    // 2. Conversie Giro (250 DPS range -> 131.0 LSB/dps)
     float gyroRollRate = gx / 131.0f;
     float gyroPitchRate = gy / 131.0f;
 
-    // 3. FILTRU COMPLEMENTAR AVANSAT
-    // Integrăm giroscopul și corectăm cu accelerometrul
     roll = alpha * (roll + gyroRollRate * dt) + (1.0f - alpha) * accRoll;
     pitch = alpha * (pitch + gyroPitchRate * dt) + (1.0f - alpha) * accPitch;
 
-    // 4. DEADZONE (Elimină tremuratul când stă pe masă)
+    // DEADZONE pentru stabilitate pe birou
     if (abs(roll) < 0.25) roll = 0;
     if (abs(pitch) < 0.25) pitch = 0;
-  
 }
 
 void sensorsSetCpuLoad(int cpuLoadPercent) {

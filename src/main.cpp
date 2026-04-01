@@ -12,68 +12,67 @@ static unsigned long cpuTimer = 0;
 static unsigned long busyAccum = 0;
 
 void setup() {
-  Serial.begin(115200);
-  delay(1000);
+    Serial.begin(115200);
+    delay(1000);
 
-  stateInit();
+    stateInit();
+    wifiInit();
+    stateUpdateIp(wifiGetIP());
 
-  wifiInit();
-  stateUpdateIp(wifiGetIP());
+    oledInit();
+    buttonsInit();
+    sensorsInit();
 
-  oledInit();
-  buttonsInit();
-  sensorsInit();
+    oledRequestRefresh();
+    apiServerInit();
 
-  oledRequestRefresh();
-
-  apiServerInit();
-
-  addLog("System state initialized");
-  addLog("WiFi initialized");
-  addLog("OLED initialized");
-  addLog("Sensors initialized");
-  addLog("API server initialized");
-
-  Serial.println("SYSTEM READY");
+    addLog("System state initialized");
+    addLog("WiFi initialized");
+    addLog("OLED initialized");
+    addLog("Sensors initialized");
+    addLog("API server initialized");
+    Serial.println("SYSTEM READY");
 }
 
 void loop() {
-  unsigned long loopStart = micros();
-  unsigned long nowMs = millis();
+    unsigned long loopStart = micros();
+    unsigned long nowMs = millis();
 
-  apiServerHandle();
-  buttonsUpdate();
+    apiServerHandle();
+    buttonsUpdate();
 
-  if (nowMs - sensorTimer >= 1000) {
-    sensorsUpdate();
-    oledRequestRefresh();
-    sensorTimer = nowMs;
-  }
+    // Actualizare ultrarapidă pentru accelerometru și giroscop
+    sensorsUpdateFast();
 
-  if (nowMs - clientTimer >= 2000) {
-    stateUpdateClients(wifiGetClientCount());
-    stateUpdateIp(wifiGetIP());
-    oledRequestRefresh();
-    clientTimer = nowMs;
-  }
+    // Actualizare lentă (doar 1 dată pe secundă) pt NTC/INA219
+    if (nowMs - sensorTimer >= 1000) {
+        sensorsUpdateSlow();
+        oledRequestRefresh();
+        sensorTimer = nowMs;
+    }
 
-  unsigned long loopEnd = micros();
-  busyAccum += (loopEnd - loopStart);
+    if (nowMs - clientTimer >= 2000) {
+        stateUpdateClients(wifiGetClientCount());
+        stateUpdateIp(wifiGetIP());
+        oledRequestRefresh();
+        clientTimer = nowMs;
+    }
 
-  if (nowMs - cpuTimer >= 1000) {
-    int cpuLoad = busyAccum / 10000UL;
-    if (cpuLoad > 100) cpuLoad = 100;
+    unsigned long loopEnd = micros();
+    busyAccum += (loopEnd - loopStart);
 
-    sensorsSetCpuLoad(cpuLoad);
-    oledRequestRefresh();
+    if (nowMs - cpuTimer >= 1000) {
+        int cpuLoad = busyAccum / 10000UL;
+        if (cpuLoad > 100) cpuLoad = 100;
+        sensorsSetCpuLoad(cpuLoad);
+        oledRequestRefresh();
+        busyAccum = 0;
+        cpuTimer = nowMs;
+    }
 
-    busyAccum = 0;
-    cpuTimer = nowMs;
-  }
+    if (oledNeedsRefresh()) {
+        oledUpdate();
+    }
 
-  if (oledNeedsRefresh()) {
-    oledUpdate();
-  }
-
-  delay(10);
+    delay(10);
 }
