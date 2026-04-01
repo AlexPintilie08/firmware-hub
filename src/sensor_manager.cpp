@@ -76,7 +76,7 @@ void sensorsUpdateSlow() {
     }
 }
 
-void sensorsUpdateFast() {
+void sensorsUpdate() {
     //---- LOGICA BMI160 ---
     if (getBmi160State().status != "online") return;
 

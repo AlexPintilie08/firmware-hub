@@ -7,10 +7,8 @@ extern float roll;
 extern float pitch;
 
 void sensorsInit();
-// Funcție separată pentru INA219 și Temperatura (apelată o dată pe secundă)
-void sensorsUpdateSlow();
-// Funcție pentru calculul giroscopului (apelată rapid în bucla principală)
-void sensorsUpdateFast();
+void sensorsUpdate();      // Trebuie să fie fără "Fast"
+void sensorsUpdateSlow();  // Funcția pentru temperatură NTC
 void sensorsSetCpuLoad(int cpuLoadPercent);
 
 #endif

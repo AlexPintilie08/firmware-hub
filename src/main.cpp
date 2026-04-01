@@ -50,7 +50,7 @@ void loop() {
     buttonsUpdate();
 
     // Actualizare ultrarapidă pentru accelerometru și giroscop
-    sensorsUpdateFast();
+    sensorsUpdate();
 
     if (nowMs - wsTimer >= 30) {
         // Preluăm variabilele externe din sensor_manager.h și creăm un JSON minimal
