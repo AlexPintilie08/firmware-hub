@@ -7,7 +7,7 @@
 
 // ina
 Adafruit_INA219 ina219;
-static float filteredTemp = 25.0;
+static float filteredTemp = 22.0;
 const float TEMP_ALFA = 0.05;
 
 // Variabile pentru BMI160
@@ -35,6 +35,8 @@ void sensorsInit() {
         for(int i = 0; i < 100; i++) {
             int ax, ay, az;
             BMI160.readAccelerometer(ax, ay, az);
+            float totalG = sqrt(ax*ax + ay*ay + az*az) / 16384.0f;
+            getTelemetryState().accelZ = totalG; // O salvăm aici pentru simplitate
             sR += atan2(ay, az) * 180.0 / M_PI;
             sP += atan2(-ax, sqrt((float)ay * ay + (float)az * az)) * 180.0 / M_PI;
             delay(2);
@@ -87,6 +89,10 @@ void sensorsUpdate() {
 
     BMI160.readAccelerometer(ax, ay, az);
     BMI160.readGyro(gx, gy, gz);
+
+    // Calculăm G-force total (magnitudinea) și o salvăm în telemetrie
+    float totalG = sqrt(pow(ax/16384.0f, 2) + pow(ay/16384.0f, 2) + pow(az/16384.0f, 2));
+    getTelemetryState().accelZ = totalG;
 
     float accRoll = (atan2(ay, az) * 180.0 / M_PI) - rollOffset;
     float accPitch = (atan2(-ax, sqrt((float)ay * ay + (float)az * az)) * 180.0 / M_PI) - pitchOffset;

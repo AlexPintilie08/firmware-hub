@@ -54,10 +54,11 @@ void loop() {
 
     if (nowMs - wsTimer >= 30) {
         // Preluăm variabilele externe din sensor_manager.h și creăm un JSON minimal
-        String wsJson = "{\"roll\":" + String(roll, 2) + ",\"pitch\":" + String(pitch, 2) + "}";
-        
-        // Trimitem string-ul JSON către toți clienții conectați pe portul 81
-        webSocket.broadcastTXT(wsJson);
+        // În loop, la timer-ul de WebSockets:
+        String wsJson = "{\"roll\":" + String(roll, 2) + 
+                ",\"pitch\":" + String(pitch, 2) + 
+                ",\"accel\":" + String(getTelemetryState().accelZ, 2) + "}";
+         webSocket.broadcastTXT(wsJson);
         
         wsTimer = nowMs;
     }

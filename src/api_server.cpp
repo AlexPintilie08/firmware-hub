@@ -51,6 +51,7 @@ static void handleData() {
     json += "\"temperature\":" + String(t.temperatureC, 1) + ",";
     json += "\"voltage\":" + String(t.voltageV, 2) + ",";
     json += "\"current\":" + String(t.currentmA, 1) + ",";
+    json += "\"accelZ\":" + String(t.accelZ, 2) + ",";
     json += "\"currentTotalmAh\":" + String(t.currentTotalmAh, 1) + ",";
     json += "\"batteryPercent\":" + String(t.batteryPercent) + ",";
     json += "\"batteryLifeH\":" + String(t.batteryLifeH, 1) + ",";

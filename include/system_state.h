@@ -11,6 +11,7 @@ struct HubState {
 };
 
 struct TelemetryState {
+  float accelZ;
   float temperatureC;
   float voltageV;
   float currentmA;
