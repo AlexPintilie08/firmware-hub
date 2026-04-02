@@ -2,6 +2,7 @@
 #include "system_state.h"
 #include "hub_config.h"
 #include "wifi_manager.h"
+#include "sensor_manager.h"
 
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -177,7 +178,7 @@ void oledUpdate() {
       display.drawFastHLine(0, 22, 128, WHITE);
 
       display.setCursor(0, 30);
-      display.print("Voltaj:  ");
+      display.print("Tensiune:  ");
       if (hasIna) {
         display.print(t.voltageV, 2);
         display.println(" V");
@@ -193,7 +194,7 @@ void oledUpdate() {
         display.println("OFF");
       }
 
-      display.print("Life:    ");
+      display.print("Autonomie: ");
       if (hasIna && t.batteryLifeH > 0.0f) {
         display.print(t.batteryLifeH, 1);
         display.println(" h");
@@ -249,47 +250,39 @@ void oledUpdate() {
       break;
     }
 
-    case 4: { // MODULE
-      display.setCursor(34, 12);
-      display.print("MODULE");
-      display.drawFastHLine(0, 22, 128, WHITE);
+    case 4: {
+    display.clearDisplay();
+    
+    // Header discret
+    display.drawFastHLine(0, 10, 128, WHITE);
+    display.setCursor(0, 0);
+    display.printf("R:%d P:%d", (int)roll, (int)pitch);
 
-      display.setCursor(0, 30);
-      display.print("HUB: ");
-      display.println("online");
+    // Centru Instrument
+    int cx = 64, cy = 40;
+    
+    // Limităm Pitch-ul vizual la +/- 20 pixeli
+    int pOffset = map(constrain((int)pitch, -60, 60), -60, 60, -20, 20);
+    float rRad = roll * M_PI / 180.0f;
 
-      display.print("MOTION: ");
-      display.println(MODULE_MOTION_DEVICE_PRESENT ? "online" : "offline");
+    // Calculăm capetele bării (lungime 30 pixeli)
+    int lx = 30;
+    int x0 = cx - cos(rRad) * lx;
+    int y0 = cy - sin(rRad) * lx + pOffset;
+    int x1 = cx + cos(rRad) * lx;
+    int y1 = cy + sin(rRad) * lx + pOffset;
 
-      display.print("INA219: ");
-      display.println(ina.status);
-
-      display.print("NTC: ");
-      display.println(ntc.status);
-
-      display.setCursor(64, 30);
-      display.print("OLED: ");
-      display.println(oledComp.status);
-
-      display.setCursor(64, 40);
-      display.print("WIFI: ");
-      display.println(wifi.status);
-
-      display.setCursor(64, 50);
-      display.print("BMI: ");
-      display.println(bmi.status);
-
-      display.setCursor(64, 60);
-      display.print("RTC: ");
-      display.println(rtc.status);
-      break;
-    }
-
-    default: {
-      display.setCursor(0, 20);
-      display.println("UNKNOWN PAGE");
-      break;
-    }
+    // Desenăm "Gimbal-ul"
+    display.drawCircle(cx, cy, 3, WHITE);          // Avionul fix
+    display.drawLine(cx-5, cy, cx+5, cy, WHITE);   // Aripile avionului
+    display.drawLine(x0, y0, x1, y1, WHITE);       // Orizontul mobil
+    
+    // Cadru de referință
+    display.drawRect(34, 15, 60, 48, WHITE);
+    
+    break;
+}
+    
   }
 
   display.display();

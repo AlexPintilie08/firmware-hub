@@ -9,8 +9,9 @@ void wifiInit() {
   Serial.println("\n--- CONFIGURARE STA ---");
 
   WiFi.mode(WIFI_STA);
-  WiFi.setTxPower(WIFI_POWER_8_5dBm);
+  WiFi.setTxPower(WIFI_POWER_5dBm);
   WiFi.setSleep(false);
+  delay(500);
 
   WiFi.begin(ssid, password);
 

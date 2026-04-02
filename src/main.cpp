@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <WebSocketsServer.h>
 #include "wifi_manager.h"
 #include "api_server.h"
 #include "system_state.h"
@@ -11,69 +12,86 @@ static unsigned long clientTimer = 0;
 static unsigned long cpuTimer = 0;
 static unsigned long busyAccum = 0;
 
+WebSocketsServer webSocket(81);
+
+// Temporizator dedicat pentru expedierea datelor WebSockets
+static unsigned long wsTimer = 0;
+
 void setup() {
-  Serial.begin(115200);
-  delay(1000);
+    Serial.begin(115200);
+    delay(1000);
 
-  stateInit();
+    stateInit();
+    wifiInit();
+    stateUpdateIp(wifiGetIP());
 
-  wifiInit();
-  stateUpdateIp(wifiGetIP());
+    oledInit();
+    buttonsInit();
+    sensorsInit();
 
-  oledInit();
-  buttonsInit();
-  sensorsInit();
+    oledRequestRefresh();
+    webSocket.begin();
+    apiServerInit();
 
-  oledRequestRefresh();
-
-  apiServerInit();
-
-  addLog("System state initialized");
-  addLog("WiFi initialized");
-  addLog("OLED initialized");
-  addLog("Sensors initialized");
-  addLog("API server initialized");
-
-  Serial.println("SYSTEM READY");
+    addLog("System state initialized");
+    addLog("WiFi initialized");
+    addLog("OLED initialized");
+    addLog("Sensors initialized");
+    addLog("API server initialized");
+    Serial.println("SYSTEM READY");
 }
 
 void loop() {
-  unsigned long loopStart = micros();
-  unsigned long nowMs = millis();
+    unsigned long loopStart = micros();
+    unsigned long nowMs = millis();
 
-  apiServerHandle();
-  buttonsUpdate();
+    webSocket.loop();
+    apiServerHandle();
+    buttonsUpdate();
 
-  if (nowMs - sensorTimer >= 1000) {
+    // Actualizare ultrarapidă pentru accelerometru și giroscop
     sensorsUpdate();
-    oledRequestRefresh();
-    sensorTimer = nowMs;
-  }
 
-  if (nowMs - clientTimer >= 2000) {
-    stateUpdateClients(wifiGetClientCount());
-    stateUpdateIp(wifiGetIP());
-    oledRequestRefresh();
-    clientTimer = nowMs;
-  }
+    if (nowMs - wsTimer >= 30) {
+        // Preluăm variabilele externe din sensor_manager.h și creăm un JSON minimal
+        // În loop, la timer-ul de WebSockets:
+        String wsJson = "{\"roll\":" + String(roll, 2) + 
+                ",\"pitch\":" + String(pitch, 2) + 
+                ",\"accel\":" + String(getTelemetryState().accelZ, 2) + "}";
+         webSocket.broadcastTXT(wsJson);
+        
+        wsTimer = nowMs;
+    }
 
-  unsigned long loopEnd = micros();
-  busyAccum += (loopEnd - loopStart);
+    // Actualizare lentă (doar 1 dată pe secundă) pt NTC/INA219
+    if (nowMs - sensorTimer >= 1000) {
+        sensorsUpdateSlow();
+        oledRequestRefresh();
+        sensorTimer = nowMs;
+    }
 
-  if (nowMs - cpuTimer >= 1000) {
-    int cpuLoad = busyAccum / 10000UL;
-    if (cpuLoad > 100) cpuLoad = 100;
+    if (nowMs - clientTimer >= 2000) {
+        stateUpdateClients(wifiGetClientCount());
+        stateUpdateIp(wifiGetIP());
+        oledRequestRefresh();
+        clientTimer = nowMs;
+    }
 
-    sensorsSetCpuLoad(cpuLoad);
-    oledRequestRefresh();
+    unsigned long loopEnd = micros();
+    busyAccum += (loopEnd - loopStart);
 
-    busyAccum = 0;
-    cpuTimer = nowMs;
-  }
+    if (nowMs - cpuTimer >= 1000) {
+        int cpuLoad = busyAccum / 10000UL;
+        if (cpuLoad > 100) cpuLoad = 100;
+        sensorsSetCpuLoad(cpuLoad);
+        oledRequestRefresh();
+        busyAccum = 0;
+        cpuTimer = nowMs;
+    }
 
-  if (oledNeedsRefresh()) {
-    oledUpdate();
-  }
+    if (oledNeedsRefresh()) {
+        oledUpdate();
+    }
 
-  delay(10);
+    delay(10);
 }

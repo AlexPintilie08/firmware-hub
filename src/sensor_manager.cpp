@@ -1,90 +1,113 @@
 #include "sensor_manager.h"
-#include "system_state.h"
 #include "hub_config.h"
-
-#include <Wire.h>
+#include "system_state.h"
 #include <Adafruit_INA219.h>
+#include <BMI160Gen.h>
+#include <Wire.h>
 
-static Adafruit_INA219 ina219;
-static bool inaOk = false;
+// ina
+Adafruit_INA219 ina219;
+static float filteredTemp = 22.0;
+const float TEMP_ALFA = 0.05;
+
+// Variabile pentru BMI160
+BMI160GenClass bmi160;
+const int8_t i2c_addr = 0x68;
+float roll = 0, pitch = 0;
+unsigned long lastMicros = 0;
+static float rollOffset = 0;
+static float pitchOffset = 0;
+const float alpha = 0.998f;
 
 void sensorsInit() {
-  inaOk = false;
+    // 1. Init INA219 (existent)
+    if (MODULE_INA219_PRESENT) {
+        ina219.begin();
+    }
 
-  if (MODULE_INA219_PRESENT) {
-    inaOk = ina219.begin();
-  }
+    // 2. Init BMI160
+    if (BMI160.begin(BMI160GenClass::I2C_MODE, 0x68)) {
+        BMI160.setAccelerometerRange(2);
+        BMI160.setGyroRange(250);
 
-  ComponentState& ina = getIna219State();
+        // Calibrare precisă (media pe 100 de citiri)
+        float sR = 0, sP = 0;
+        for(int i = 0; i < 100; i++) {
+            int ax, ay, az;
+            BMI160.readAccelerometer(ax, ay, az);
+            float totalG = sqrt(ax*ax + ay*ay + az*az) / 16384.0f;
+            getTelemetryState().accelZ = totalG; // O salvăm aici pentru simplitate
+            sR += atan2(ay, az) * 180.0 / M_PI;
+            sP += atan2(-ax, sqrt((float)ay * ay + (float)az * az)) * 180.0 / M_PI;
+            delay(2);
+        }
+        rollOffset = sR / 100.0;
+        pitchOffset = sP / 100.0;
+        lastMicros = micros();
+        getBmi160State().status = "online";
+    }
+}
 
-  if (inaOk) {
-    ina.status = "online";
-    ina.message = "INA219 active";
-    Serial.println("INA219 init ok");
-    addLog("INA219 detected");
-  } else {
-    ina.status = "offline";
-    ina.message = "INA219 not detected";
-    Serial.println("INA219 init failed");
-    addLog("INA219 offline");
-  }
+void sensorsUpdateSlow() {
+    TelemetryState& t = getTelemetryState();
+    ComponentState& ntc = getNtcState();
+    ComponentState& ina = getIna219State();
+
+    // --- LOGICA NTC ---
+    if (MODULE_NTC_PRESENT) {
+        int raw = analogRead(NTC_PIN);
+        if (raw > 0 && raw < 4095) {
+            float resistance = NTC_R_FIXED * (4095.0 / (float)raw - 1.0);
+            float steinhart = log(resistance / NTC_R_NOMINAL) / NTC_B_COEF;
+            steinhart += 1.0 / (NTC_T_NOMINAL + 273.15);
+            float currentT = (1.0 / steinhart) - 273.15;
+            filteredTemp = (TEMP_ALFA * currentT) + (1.0 - TEMP_ALFA) * filteredTemp;
+            t.temperatureC = filteredTemp;
+            ntc.status = "online";
+        }
+    }
+
+    // --- LOGICA INA219 ---
+    if (MODULE_INA219_PRESENT) {
+        t.voltageV = ina219.getBusVoltage_V();
+        t.currentmA = ina219.getCurrent_mA();
+        
+        float pct = ((t.voltageV - BATTERY_VOLTAGE_MIN) / (BATTERY_VOLTAGE_MAX - BATTERY_VOLTAGE_MIN)) * 100.0f;
+        t.batteryPercent = (int)constrain(pct, 0, 100);
+        ina.status = "online";
+    }
 }
 
 void sensorsUpdate() {
-  TelemetryState& t = getTelemetryState();
-  ComponentState& ina = getIna219State();
+    //---- LOGICA BMI160 ---
+    if (getBmi160State().status != "online") return;
 
-  if (!inaOk) {
-    ina.status = "offline";
-    ina.message = "INA219 not detected";
-    return;
-  }
+    int ax, ay, az, gx, gy, gz;
+    unsigned long now = micros();
+    float dt = (now - lastMicros) / 1000000.0f;
+    lastMicros = now;
 
-  float voltage = ina219.getBusVoltage_V();
-  float current = ina219.getCurrent_mA();
+    BMI160.readAccelerometer(ax, ay, az);
+    BMI160.readGyro(gx, gy, gz);
 
-  t.voltageV = voltage;
-  t.currentmA = current;
+    // Calculăm G-force total (magnitudinea) și o salvăm în telemetrie
+    float totalG = sqrt(pow(ax/16384.0f, 2) + pow(ay/16384.0f, 2) + pow(az/16384.0f, 2));
+    getTelemetryState().accelZ = totalG;
 
-  // acumulare mAh reală în timp
-  static unsigned long lastUpdate = 0;
-  unsigned long now = millis();
+    float accRoll = (atan2(ay, az) * 180.0 / M_PI) - rollOffset;
+    float accPitch = (atan2(-ax, sqrt((float)ay * ay + (float)az * az)) * 180.0 / M_PI) - pitchOffset;
 
-  if (lastUpdate != 0) {
-    float hours = (now - lastUpdate) / 3600000.0f;
-    t.currentTotalmAh += current * hours;
-  }
+    float gyroRollRate = gx / 131.0f;
+    float gyroPitchRate = gy / 131.0f;
 
-  lastUpdate = now;
+    roll = alpha * (roll + gyroRollRate * dt) + (1.0f - alpha) * accRoll;
+    pitch = alpha * (pitch + gyroPitchRate * dt) + (1.0f - alpha) * accPitch;
 
-  // procent baterie real din tensiune
-  float batteryPercentFloat =
-      ((voltage - BATTERY_VOLTAGE_MIN) / (BATTERY_VOLTAGE_MAX - BATTERY_VOLTAGE_MIN)) * 100.0f;
-
-  if (batteryPercentFloat < 0.0f) batteryPercentFloat = 0.0f;
-  if (batteryPercentFloat > 100.0f) batteryPercentFloat = 100.0f;
-
-  t.batteryPercent = (int)batteryPercentFloat;
-
-  // estimare durată viață
-  if (current > 1.0f) {
-    float remainingmAh = BATTERY_CAPACITY_MAH * (batteryPercentFloat / 100.0f);
-    t.batteryLifeH = remainingmAh / current;
-  } else {
-    t.batteryLifeH = 0.0f;
-  }
-
-  // NTC încă nu există
-  ComponentState& ntc = getNtcState();
-  if (ntc.status != "online") {
-    t.temperatureC = 0.0f;
-  }
-
-  ina.status = "online";
-  ina.message = "INA219 active";
+    // DEADZONE pentru stabilitate pe birou
+    if (abs(roll) < 0.25) roll = 0;
+    if (abs(pitch) < 0.25) pitch = 0;
 }
 
 void sensorsSetCpuLoad(int cpuLoadPercent) {
-  TelemetryState& t = getTelemetryState();
-  t.cpuLoadPercent = cpuLoadPercent;
+    getTelemetryState().cpuLoadPercent = cpuLoadPercent;
 }
