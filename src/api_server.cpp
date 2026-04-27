@@ -5,7 +5,7 @@
 #include "hub_config.h"
 #include "oled_manager.h"
 #include "sensor_manager.h"
-
+#include <Arduino.h>
 static WebServer server(80);
 
 static const char* pageTitleFromIndex(int page) {
