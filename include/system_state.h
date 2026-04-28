@@ -1,66 +1,43 @@
-#ifndef SYSTEM_STATE_H
-#define SYSTEM_STATE_H
-
+#pragma once
 #include <Arduino.h>
 
-struct HubState {
-  String deviceName;
-  String status;
-  String ip;
-  int clients;
-};
+// HEALTH
+extern float bodyTempC;
+extern float bpm;
+extern float bpmAvg;
+extern int spo2;
+extern long irValue;
+extern long redValue;
 
-struct TelemetryState {
-  float accelZ;
-  float temperatureC;
-  float voltageV;
-  float currentmA;
-  float currentTotalmAh;
-  int batteryPercent;
-  float batteryLifeH;
-  int cpuLoadPercent;
-};
+// POWER
+extern float voltage;
+extern float currentMa;
+extern float currentTotalmAh;
+extern int batteryPercent;
+extern float estimatedBatteryLifeHours;
 
-struct OledState {
-  int currentPage;
-  String pageTitle;
-  String lastActionSource;
-};
+// MOTION
+extern float accX, accY, accZ;
+extern float gyroX, gyroY, gyroZ;
+extern float accTotal;
+extern float dynX;
+extern float dynY;
+extern float dynZ;
+extern bool parachuteOpened;
+extern bool positionChanged;
+extern bool freeFallRisk;
+extern bool excessiveRotation;
+extern bool noMovement;
 
-struct ComponentState {
-  String name;
-  String hostDevice;
-  String status;
-  String message;
-};
+// AI / STATUS
+extern String stressLevel;
+extern String alertLevel;
+extern String prediction;
+extern int riskScore;
 
-struct LogEntry {
-  unsigned long timestamp;
-  String message;
-};
+// SYSTEM
+extern int cpuLoad;
 
-#define LOG_MAX 20
-
-void stateInit();
-
-HubState& getHubState();
-void stateUpdateIp(const String& ip);
-void stateUpdateClients(int clients);
-
-OledState& getOledState();
-void oledSetPage(int page, const String& title, const String& source);
-
-TelemetryState& getTelemetryState();
-
-ComponentState& getIna219State();
-ComponentState& getNtcState();
-ComponentState& getBmi160State();
-ComponentState& getRtcState();
-ComponentState& getOledComponentState();
-ComponentState& getWifiComponentState();
-
-LogEntry* getLogs();
-int getLogCount();
-void addLog(const String& msg);
-
-#endif
+// UI
+extern int page;
+extern int PAGE_COUNT;

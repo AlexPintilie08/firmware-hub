@@ -1,68 +1,48 @@
 #include "system_state.h"
-#include "hub_config.h"
 
-static HubState hubState;
-static TelemetryState telemetryState;
-static OledState oledState;
-static ComponentState ina219State;
-static ComponentState ntcState;
-static ComponentState bmi160State;
-static ComponentState rtcState;
-static ComponentState oledComponentState;
-static ComponentState wifiComponentState;
-static LogEntry logs[LOG_MAX];
-static int logCount = 0;
+// HEALTH
+float bodyTempC = 36.5;
+float bpm = 0;
+float bpmAvg = 0;
+int spo2 = 0;
+long irValue = 0;
+long redValue = 0;
 
-void stateInit() {
-    hubState.deviceName = HUB_NAME;
-    hubState.status = "initializing";
-    
-    oledState.currentPage = 0;
-    oledState.pageTitle = "Dashboard";
+// POWER
+float voltage = 3.7;
+float currentMa = 0;
+float currentTotalmAh = 0;
+int batteryPercent = 0;
+float estimatedBatteryLifeHours = 0;
 
-    ina219State.name = "INA219";
-    ina219State.status = "offline";
-    
-    ntcState.name = "NTC";
-    ntcState.status = "offline";
+// MOTION
+float accX = 0;
+float accY = 0;
+float accZ = 0;
 
-    wifiComponentState.name = "WiFi";
-    wifiComponentState.status = "offline";
+float gyroX = 0;
+float gyroY = 0;
+float gyroZ = 0;
+float dynX = 0;
+float dynY = 0;
+float dynZ = 0;
+float accTotal = 0;
 
-    oledComponentState.name = "OLED";
-    oledComponentState.status = "online";
-}
+bool parachuteOpened = false;
+bool positionChanged = false;
+bool freeFallRisk = false;
+bool excessiveRotation = false;
+bool noMovement = false;
 
-HubState& getHubState() { return hubState; }
-void stateUpdateIp(const String& ip) { hubState.ip = ip; }
-void stateUpdateClients(int clients) { hubState.clients = clients; }
-OledState& getOledState() { return oledState; }
-void oledSetPage(int page, const String& title, const String& source) {
-    oledState.currentPage = page;
-    oledState.pageTitle = title;
-    oledState.lastActionSource = source;
-}
-TelemetryState& getTelemetryState() { return telemetryState; }
-ComponentState& getIna219State() { return ina219State; }
-ComponentState& getNtcState() { return ntcState; }
-ComponentState& getBmi160State() { return bmi160State; }
-ComponentState& getRtcState() { return rtcState; }
-ComponentState& getOledComponentState() { return oledComponentState; }
-ComponentState& getWifiComponentState() { return wifiComponentState; }
-LogEntry* getLogs() { return logs; }
-int getLogCount() { return logCount; }
+// AI / STATUS
+String stressLevel = "NORMAL";
+String alertLevel = "SAFE";
+String prediction = "normal";
+int riskScore = 0;
 
-void addLog(const String& msg) {
-    unsigned long ts = millis();
-    if (logCount < LOG_MAX) {
-        logs[logCount].timestamp = ts;
-        logs[logCount].message = msg;
-        logCount++;
-    } else {
-        for (int i = 1; i < LOG_MAX; i++) {
-            logs[i - 1] = logs[i];
-        }
-        logs[LOG_MAX - 1].timestamp = ts;
-        logs[LOG_MAX - 1].message = msg;
-    }
-}
+// SYSTEM
+int cpuLoad = 0;
+
+// UI
+int page = 0;
+int PAGE_COUNT = 10;

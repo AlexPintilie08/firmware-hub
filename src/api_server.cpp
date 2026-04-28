@@ -1,129 +1,90 @@
-#include "api_server.h"
-#include <WebServer.h>
-#include "wifi_manager.h"
-#include "system_state.h"
-#include "hub_config.h"
-#include "oled_manager.h"
-#include "sensor_manager.h"
 #include <Arduino.h>
-static WebServer server(80);
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include "system_state.h"
 
-static const char* pageTitleFromIndex(int page) {
-    switch (page) {
-        case 0: return "HOME";
-        case 1: return "TEMP";
-        case 2: return "POWER";
-        case 3: return "NET";
-        case 4: return "MOD";
-        default: return "UNK";
-    }
-}
+const char* BACKEND_URL = "http://172.20.10.4:4000/api/esp-update";
 
-static void handleRoot() {
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "text/plain", "Mr Hub API online");
-}
-
-static void handleData() {
-    HubState& hub = getHubState();
-    OledState& oled = getOledState();
-    TelemetryState& t = getTelemetryState();
-    ComponentState& wifi = getWifiComponentState();
-    ComponentState& ina = getIna219State();
-    ComponentState& ntc = getNtcState();
-    ComponentState& bmi = getBmi160State();
-    ComponentState& rtc = getRtcState();
-    ComponentState& oledComp = getOledComponentState();
-
-    String json = "{";
-    json += "\"hub\":{";
-    json += "\"name\":\"" + hub.deviceName + "\",";
-    json += "\"status\":\"" + hub.status + "\",";
-    json += "\"ip\":\"" + hub.ip + "\",";
-    json += "\"clients\":" + String(hub.clients) + ",";
-    json += "\"wifiConnected\":" + String(wifiIsConnected() ? "true" : "false") + ",";
-    json += "\"rssi\":" + String(wifiGetRSSI());
-    json += "},";
-    
-    json += "\"telemetry\":{";
-    json += "\"roll\":" + String(roll, 2) + ",";       // Trimitem înclinarea Roll
-    json += "\"pitch\":" + String(pitch, 2) + ",";     // Trimitem înclinarea Pitch
-    json += "\"temperature\":" + String(t.temperatureC, 1) + ",";
-    json += "\"voltage\":" + String(t.voltageV, 2) + ",";
-    json += "\"current\":" + String(t.currentmA, 1) + ",";
-    json += "\"accelZ\":" + String(t.accelZ, 2) + ",";
-    json += "\"currentTotalmAh\":" + String(t.currentTotalmAh, 1) + ",";
-    json += "\"batteryPercent\":" + String(t.batteryPercent) + ",";
-    json += "\"batteryLifeH\":" + String(t.batteryLifeH, 1) + ",";
-    json += "\"cpuLoadPercent\":" + String(t.cpuLoadPercent);
-    json += "},";
-    
-    json += "\"components\":{";
-    json += "\"wifi\":{\"status\":\"" + wifi.status + "\",\"message\":\"" + wifi.message + "\"},";
-    json += "\"oled\":{\"status\":\"" + oledComp.status + "\",\"message\":\"" + oledComp.message + "\"},";
-    json += "\"ina219\":{\"status\":\"" + ina.status + "\",\"message\":\"" + ina.message + "\"},";
-    json += "\"ntc\":{\"status\":\"" + ntc.status + "\",\"message\":\"" + ntc.message + "\"},";
-    json += "\"bmi160\":{\"status\":\"" + bmi.status + "\",\"message\":\"" + bmi.message + "\"},";
-    json += "\"rtc\":{\"status\":\"" + rtc.status + "\",\"message\":\"" + rtc.message + "\"},";
-    json += "\"motion\":{\"status\":\"offline\",\"message\":\"Ms Motion offline\"}";
-    json += "},";
-    
-    json += "\"oled\":{";
-    json += "\"page\":" + String(oled.currentPage) + ",";
-    json += "\"title\":\"" + oled.pageTitle + "\",";
-    json += "\"lastActionSource\":\"" + oled.lastActionSource + "\"";
-    json += "},";
-    
-    json += "\"logs\":[";
-    LogEntry* logs = getLogs();
-    for (int i = 0; i < getLogCount(); i++) {
-        json += "{";
-        json += "\"timestamp\":" + String(logs[i].timestamp) + ",";
-        json += "\"message\":\"" + logs[i].message + "\"";
-        json += "}";
-        if (i < getLogCount() - 1) json += ",";
-    }
-    json += "]";
-    json += "}";
-
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "application/json", json);
-}
-
-static void handleNextPage() {
-    OledState& oled = getOledState();
-    oled.currentPage = (oled.currentPage + 1) % OLED_PAGE_COUNT;
-    oled.pageTitle = pageTitleFromIndex(oled.currentPage);
-    oled.lastActionSource = "web";
-    addLog("OLED page changed: " + oled.pageTitle + " via WEB NEXT");
-    oledRequestRefresh();
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "text/plain", "OK");
-}
-
-static void handlePrevPage() {
-    OledState& oled = getOledState();
-    oled.currentPage--;
-    if (oled.currentPage < 0) {
-        oled.currentPage = OLED_PAGE_COUNT - 1;
-    }
-    oled.pageTitle = pageTitleFromIndex(oled.currentPage);
-    oled.lastActionSource = "web";
-    addLog("OLED page changed: " + oled.pageTitle + " via WEB PREV");
-    oledRequestRefresh();
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "text/plain", "OK");
-}
+static unsigned long lastBackendSend = 0;
 
 void apiServerInit() {
-    server.on("/", HTTP_GET, handleRoot);
-    server.on("/api/data", HTTP_GET, handleData);
-    server.on("/api/next", HTTP_GET, handleNextPage);
-    server.on("/api/prev", HTTP_GET, handlePrevPage);
-    server.begin();
-    Serial.println("API server pornit.");
+  Serial.println("API backend client ready");
 }
 
-void apiServerHandle() {
-    server.handleClient();
+String boolJson(bool value) {
+  return value ? "true" : "false";
+}
+
+void apiServerUpdate() {
+  unsigned long now = millis();
+
+  if (now - lastBackendSend < 1500) return;
+  lastBackendSend = now;
+
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  http.setTimeout(600);
+  http.begin(BACKEND_URL);
+  http.addHeader("Content-Type", "application/json");
+
+  String json = "{";
+
+  json += "\"wearable\":{";
+  json += "\"status\":\"" + alertLevel + "\",";
+  json += "\"battery\":" + String(batteryPercent) + ",";
+  json += "\"connection\":\"online\"";
+  json += "},";
+
+  json += "\"physiology\":{";
+  json += "\"bpm\":" + String(bpmAvg, 0) + ",";
+  json += "\"spo2\":" + String(spo2) + ",";
+  json += "\"bodyTemperature\":" + String(bodyTempC, 1) + ",";
+  json += "\"stressLevel\":\"" + stressLevel + "\"";
+  json += "},";
+
+  json += "\"motion\":{";
+  json += "\"accX\":" + String(accX, 2) + ",";
+  json += "\"accY\":" + String(accY, 2) + ",";
+  json += "\"accZ\":" + String(accZ, 2) + ",";
+  json += "\"gyroX\":" + String(gyroX, 1) + ",";
+  json += "\"gyroY\":" + String(gyroY, 1) + ",";
+  json += "\"gyroZ\":" + String(gyroZ, 1) + ",";
+  json += "\"accTotal\":" + String(accTotal, 2) + ",";
+  json += "\"parachuteOpened\":" + boolJson(parachuteOpened) + ",";
+  json += "\"positionChanged\":" + boolJson(positionChanged) + ",";
+  json += "\"freeFallRisk\":" + boolJson(freeFallRisk) + ",";
+  json += "\"excessiveRotation\":" + boolJson(excessiveRotation) + ",";
+  json += "\"noMovement\":" + boolJson(noMovement);
+  json += "},";
+
+  json += "\"ai\":{";
+  json += "\"riskScore\":" + String(riskScore) + ",";
+  json += "\"prediction\":\"" + prediction + "\",";
+  json += "\"alert\":\"" + alertLevel + "\"";
+  json += "},";
+
+  json += "\"system\":{";
+  json += "\"cpuLoad\":{\"value\":" + String(cpuLoad) + ",\"unit\":\"%\"},";
+  json += "\"voltage\":{\"value\":" + String(voltage, 2) + ",\"unit\":\"V\"},";
+  json += "\"currentNow\":{\"value\":" + String(currentMa, 1) + ",\"unit\":\"mA\"},";
+  json += "\"battery\":{\"percent\":" + String(batteryPercent) + "}";
+  json += "},";
+
+  json += "\"wireless\":{";
+  json += "\"connected\":true,";
+  json += "\"ssid\":\"" + WiFi.SSID() + "\",";
+  json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
+  json += "\"mac\":\"" + WiFi.macAddress() + "\",";
+  json += "\"rssi\":{\"value\":" + String(WiFi.RSSI()) + ",\"unit\":\"dBm\"}";
+  json += "}";
+
+  json += "}";
+
+  int code = http.POST(json);
+
+  Serial.print("POST backend: ");
+  Serial.println(code);
+
+  http.end();
 }

@@ -1,302 +1,348 @@
-#include "oled_manager.h"
-#include "system_state.h"
-#include "hub_config.h"
-#include "wifi_manager.h"
-#include "sensor_manager.h"
-
+#include <Arduino.h>
 #include <Wire.h>
+#include <WiFi.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include "system_state.h"
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_ADDR 0x3C
 
-#define I2C_SDA I2C_SDA_PIN
-#define I2C_SCL I2C_SCL_PIN
-
 static Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
-static bool oledRefreshNeeded = true;
+static bool oledOk = false;
+static unsigned long lastDraw = 0;
 
-static const char* getPageTitle(int page) {
-  switch (page) {
-    case 0: return "MONITORIZARE";
-    case 1: return "ENERGIE";
-    case 2: return "RETEA WiFi";
-    case 3: return "SISTEM";
-    case 4: return "MODULE";
-    default: return "UNKNOWN";
-  }
-}
+extern bool bleConnected;
 
-static int signalBarsFromRssi(int rssi) {
-  if (rssi >= -60) return 4;
-  if (rssi >= -70) return 3;
-  if (rssi >= -80) return 2;
-  if (rssi >= -90) return 1;
-  return 0;
-}
-
-static void drawBatteryTopBar(int percent) {
-  display.setCursor(72, 0);
-
-  if (percent > 0) {
-    display.print(percent);
-    display.print("%");
-  } else {
-    display.print("--");
-  }
-
-  display.drawRect(105, 0, 20, 8, WHITE);
-  display.fillRect(125, 2, 2, 4, WHITE);
-
-  if (percent > 0) {
-    int fill = map(percent, 0, 100, 0, 20);
-    display.fillRect(105, 0, fill, 8, WHITE);
-  }
-}
-
-static void drawSignalBarsCompact(int x, int y, int rssi, bool connected) {
-  int bars = connected ? signalBarsFromRssi(rssi) : 0;
-
-  for (int i = 0; i < 4; i++) {
-    int barX = x + i * 3;
-    int barH = 2 + i * 2;
-    int barY = y + (8 - barH);
-
-    if (i < bars) {
-      display.fillRect(barX, barY, 2, barH, WHITE);
-    } else {
-      display.drawRect(barX, barY, 2, barH, WHITE);
-    }
-  }
-}
-
-static void drawHeader(const char* wifiText, int batteryPercent, int rssi, bool wifiConnected) {
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
-
-  display.setCursor(0, 0);
-  display.print(wifiText);
-
-  drawSignalBarsCompact(54, 0, rssi, wifiConnected);
-  drawBatteryTopBar(batteryPercent);
-}
-
-static void drawBar(int x, int y, int w, int h, int percent) {
-  if (percent < 0) percent = 0;
-  if (percent > 100) percent = 100;
-
-  display.drawRect(x, y, w, h, WHITE);
-  int fillW = map(percent, 0, 100, 0, w);
-  if (fillW > 0) {
-    display.fillRect(x, y, fillW, h, WHITE);
-  }
-}
-
-void oledInit() {
-  Wire.begin(I2C_SDA, I2C_SCL);
-
-  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
-    Serial.println("OLED init failed");
+// ---------- ICONS ----------
+void drawWifiIcon(int x, int y, bool ok) {
+  if (!ok) {
+    display.drawLine(x, y, x + 8, y + 8, BLACK);
+    display.drawLine(x + 8, y, x, y + 8, BLACK);
     return;
   }
 
+  display.drawPixel(x + 4, y + 8, BLACK);
+  display.drawCircle(x + 4, y + 8, 3, BLACK);
+  display.drawCircle(x + 4, y + 8, 6, BLACK);
+  display.fillRect(x - 3, y + 8, 16, 8, WHITE);
+}
+
+void drawBtIcon(int x, int y, bool ok) {
+  display.drawLine(x + 3, y, x + 3, y + 10, BLACK);
+  display.drawLine(x + 3, y, x + 8, y + 4, BLACK);
+  display.drawLine(x + 8, y + 4, x + 3, y + 7, BLACK);
+  display.drawLine(x + 3, y + 7, x + 8, y + 10, BLACK);
+  display.drawLine(x + 8, y + 10, x + 3, y + 5, BLACK);
+
+  if (ok) {
+    display.fillCircle(x + 11, y + 2, 2, BLACK);
+  }
+}
+
+void drawBatteryIcon(int x, int y, int percent) {
+  percent = constrain(percent, 0, 100);
+
+  display.drawRect(x, y, 14, 7, BLACK);
+  display.fillRect(x + 14, y + 2, 2, 3, BLACK);
+
+  int fillWidth = map(percent, 0, 100, 0, 10);
+  display.fillRect(x + 2, y + 2, fillWidth, 3, BLACK);
+}
+
+// ---------- COMMON UI ----------
+void drawTopBar(const char* title) {
+  display.fillRect(0, 0, 128, 14, WHITE);
+  display.setTextColor(BLACK);
+
+  display.setCursor(2, 3);
+  display.print(title);
+
+  String pageText = String(page + 1) + "/" + String(PAGE_COUNT);
+  int pageX = 74 - pageText.length() * 3;
+  display.setCursor(pageX, 3);
+  display.print(pageText);
+
+  drawWifiIcon(88, 2, WiFi.status() == WL_CONNECTED);
+  drawBtIcon(101, 2, bleConnected);
+  drawBatteryIcon(113, 3, batteryPercent);
+
+  display.setTextColor(WHITE);
+}
+
+void drawBar(int x, int y, int w, int h, int percent) {
+  percent = constrain(percent, 0, 100);
+  display.drawRect(x, y, w, h, WHITE);
+  display.fillRect(x, y, map(percent, 0, 100, 0, w), h, WHITE);
+}
+
+void drawBigInt(int x, int y, int value, const char* unit) {
+  display.setTextSize(2);
+  display.setCursor(x, y);
+  display.print(value);
+  display.setTextSize(1);
+  display.print(unit);
+  display.setTextSize(1);
+}
+
+void drawBigFloat(int x, int y, float value, const char* unit, int decimals) {
+  display.setTextSize(2);
+  display.setCursor(x, y);
+  display.print(value, decimals);
+  display.setTextSize(1);
+  display.print(unit);
+  display.setTextSize(1);
+}
+
+// ---------- PAGES ----------
+void pageStatus() {
+  drawTopBar("STATUS");
+
+  display.setCursor(0, 18);
+  display.print("ALERTA: ");
+  display.print(alertLevel);
+
+  display.setCursor(0, 30);
+  display.print("RISC: ");
+  display.print(riskScore);
+  display.print("%");
+
+  display.setCursor(0, 42);
+  display.print("Predictie:");
+  display.setCursor(0, 52);
+  display.print(prediction);
+}
+
+void pagePulse() {
+  drawTopBar("PULS");
+
+  if (irValue < 25000) {
+    display.setCursor(0, 24);
+    display.print("Pune degetul");
+    display.setCursor(0, 38);
+    display.print("pe senzor");
+    return;
+  }
+
+  if (bpmAvg <= 0) {
+    display.setCursor(0, 30);
+    display.print("Calibrare...");
+    return;
+  }
+
+  drawBigInt(25, 24, (int)bpmAvg, " BPM");
+
+  display.setCursor(0, 50);
+  if (bpmAvg < 55) display.print("puls scazut");
+  else if (bpmAvg <= 95) display.print("puls normal");
+  else if (bpmAvg <= 125) display.print("puls crescut");
+  else display.print("stres/efort mare");
+}
+
+void pageSpo2() {
+  drawTopBar("OXIGEN");
+
+  if (spo2 <= 0) {
+    display.setCursor(0, 30);
+    display.print("Astept semnal...");
+    return;
+  }
+
+  drawBigInt(38, 24, spo2, "%");
+
+  display.setCursor(0, 50);
+  if (spo2 < 90) display.print("oxigen critic");
+  else if (spo2 < 94) display.print("oxigen scazut");
+  else display.print("oxigen normal");
+}
+
+void pageBodyTemp() {
+  drawTopBar("TEMP");
+
+  drawBigFloat(25, 24, bodyTempC, "C", 1);
+
+  display.setCursor(0, 50);
+  if (bodyTempC > 38.0) display.print("temp ridicata");
+  else if (bodyTempC < 35.5) display.print("temp joasa");
+  else display.print("temp normala");
+}
+
+void pageAccel() {
+  drawTopBar("ACCEL");
+
+  display.setCursor(0, 17);
+  display.print("X:");
+  display.print(dynX, 2);
+  display.print(" Y:");
+  display.print(dynY, 2);
+
+  display.setCursor(0, 29);
+  display.print("Z:");
+  display.print(dynZ, 2);
+  display.print(" G:");
+  display.print(accTotal, 2);
+
+  float dyn = abs(accTotal - 1.0);
+
+  display.setCursor(0, 41);
+  display.print("Dinamic:");
+  display.print(dyn, 2);
+  display.print("g");
+
+  display.setCursor(0, 53);
+  display.print(positionChanged ? "pozitie schimbata" : "pozitie stabila");
+}
+
+void pageGyro() {
+  drawTopBar("GIRO");
+
+  display.setCursor(0, 18);
+  display.print("GX:");
+  display.print(gyroX, 0);
+  display.print(" dps");
+
+  display.setCursor(0, 31);
+  display.print("GY:");
+  display.print(gyroY, 0);
+  display.print(" dps");
+
+  display.setCursor(0, 44);
+  display.print("GZ:");
+  display.print(gyroZ, 0);
+  display.print(" dps");
+}
+
+void pageAI() {
+  drawTopBar("AI");
+
+  display.setCursor(0, 17);
+  display.print("Stress:");
+  display.print(stressLevel);
+
+  display.setCursor(0, 29);
+  display.print("Fall:");
+  display.print(freeFallRisk ? "DA" : "NU");
+
+  display.setCursor(62, 29);
+  display.print("Rot:");
+  display.print(excessiveRotation ? "DA" : "NU");
+
+  display.setCursor(0, 41);
+  display.print("NoMove:");
+  display.print(noMovement ? "DA" : "NU");
+
+  display.setCursor(0, 53);
+  display.print("Risk:");
+  display.print(riskScore);
+  display.print("%");
+}
+
+void pageBattery() {
+  drawTopBar("POWER");
+
+  display.setCursor(0, 17);
+  display.print("V:");
+  display.print(voltage, 2);
+  display.print("V ");
+
+  display.print("I:");
+  display.print(currentMa, 0);
+  display.print("mA");
+
+  display.setCursor(0, 30);
+  display.print("Total:");
+  display.print(currentTotalmAh, 1);
+  display.print("mAh");
+
+  display.setCursor(0, 43);
+  display.print("Life:");
+  display.print(estimatedBatteryLifeHours, 1);
+  display.print("h");
+
+  drawBar(74, 45, 48, 7, batteryPercent);
+}
+
+void pageNetwork() {
+  drawTopBar("RETEA");
+
+  display.setCursor(0, 18);
+  display.print(WiFi.status() == WL_CONNECTED ? "WiFi ONLINE" : "WiFi OFFLINE");
+
+  display.setCursor(0, 31);
+  display.print("RSSI:");
+  display.print(WiFi.RSSI());
+
+  display.setCursor(0, 44);
+  display.print(WiFi.localIP());
+}
+
+void pageSystem() {
+  drawTopBar("SISTEM");
+
+  display.setCursor(0, 18);
+  display.print("CPU:");
+  display.print(cpuLoad);
+  display.print("%");
+
+  display.setCursor(0, 31);
+  display.print("RAM:");
+  display.print(ESP.getFreeHeap() / 1024);
+  display.print("KB");
+
+  display.setCursor(0, 44);
+  display.print("Freq:");
+  display.print(ESP.getCpuFreqMHz());
+  display.print("MHz");
+}
+
+// ---------- PUBLIC ----------
+void oledManagerInit() {
+  oledOk = display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
+
+  if (!oledOk) return;
+
   display.clearDisplay();
   display.setTextColor(WHITE);
   display.setTextSize(1);
-  display.setCursor(10, 25);
-  display.println("OLED READY");
+  display.setCursor(0, 20);
+  display.println("Wearable boot...");
   display.display();
 
-  Serial.println("OLED init ok");
+  lastDraw = 0;
+  page = 0;
 }
 
-void oledUpdate() {
-  HubState& hub = getHubState();
-  OledState& oled = getOledState();
-  TelemetryState& t = getTelemetryState();
+void oledManagerUpdate() {
+  if (!oledOk) return;
 
-  ComponentState& wifi = getWifiComponentState();
-  ComponentState& ina = getIna219State();
-  ComponentState& ntc = getNtcState();
-  ComponentState& bmi = getBmi160State();
-  ComponentState& rtc = getRtcState();
-  ComponentState& oledComp = getOledComponentState();
+  static bool firstDraw = true;
 
-  bool wifiConnected = wifiIsConnected();
-  int rssi = wifiGetRSSI();
+  if (!firstDraw && millis() - lastDraw < 250) return;
 
-  bool hasIna = ina.status == "online";
-  bool hasTemp = ntc.status == "online" && t.temperatureC > 0.0f;
+  firstDraw = false;
+  lastDraw = millis();
 
   display.clearDisplay();
+  display.setTextColor(WHITE);
   display.setTextSize(1);
 
-  drawHeader(wifiConnected ? "WiFi:OK" : "WiFi:..", t.batteryPercent, rssi, wifiConnected);
-
-  switch (oled.currentPage) {
-    case 0: { // MONITORIZARE
-      display.setCursor(18, 12);
-      display.print("MONITORIZARE");
-      display.drawFastHLine(0, 22, 128, WHITE);
-
-      display.setCursor(0, 30);
-      display.print("TEMP: ");
-
-      if (hasTemp) {
-        display.print(t.temperatureC, 1);
-        display.print("C");
-
-        int tempPercent = constrain(map((int)(t.temperatureC * 10), 150, 450, 0, 100), 0, 100);
-        drawBar(75, 30, 50, 7, tempPercent);
-      } else {
-        display.print("OFF");
-        drawBar(75, 30, 50, 7, 0);
-      }
-
-      display.setCursor(0, 45);
-      display.print("CPU:  ");
-      if (t.cpuLoadPercent > 0) {
-        display.print(t.cpuLoadPercent);
-        display.print("%");
-        drawBar(75, 45, 50, 7, t.cpuLoadPercent);
-      } else {
-        display.print("--");
-        drawBar(75, 45, 50, 7, 0);
-      }
-
-      display.setCursor(0, 56);
-      display.print("Bond: ");
-      display.print(MODULE_MOTION_DEVICE_PRESENT ? "ONLINE" : "SEARCH");
+  switch (page) {
+    case 0: pageStatus(); break;
+    case 1: pagePulse(); break;
+    case 2: pageSpo2(); break;
+    case 3: pageBodyTemp(); break;
+    case 4: pageAccel(); break;
+    case 5: pageGyro(); break;
+    case 6: pageAI(); break;
+    case 7: pageBattery(); break;
+    case 8: pageNetwork(); break;
+    case 9: pageSystem(); break;
+    default:
+      page = 0;
+      pageStatus();
       break;
-    }
-
-    case 1: { // ENERGIE
-      display.setCursor(30, 12);
-      display.print("ENERGIE");
-      display.drawFastHLine(0, 22, 128, WHITE);
-
-      display.setCursor(0, 30);
-      display.print("Tensiune:  ");
-      if (hasIna) {
-        display.print(t.voltageV, 2);
-        display.println(" V");
-      } else {
-        display.println("OFF");
-      }
-
-      display.print("Consum:  ");
-      if (hasIna) {
-        display.print(t.currentmA, 1);
-        display.println(" mA");
-      } else {
-        display.println("OFF");
-      }
-
-      display.print("Autonomie: ");
-      if (hasIna && t.batteryLifeH > 0.0f) {
-        display.print(t.batteryLifeH, 1);
-        display.println(" h");
-      } else {
-        display.println("--");
-      }
-
-      drawBar(0, 58, 128, 6, t.batteryPercent > 0 ? t.batteryPercent : 0);
-      break;
-    }
-
-    case 2: { // RETEA WiFi
-      display.setCursor(26, 12);
-      display.print("RETEA WiFi");
-      display.drawFastHLine(0, 22, 128, WHITE);
-
-      display.setCursor(0, 32);
-      if (wifiConnected) {
-        display.println("Status: CONECTAT");
-        display.print("IP: ");
-        display.println(hub.ip);
-        display.print("Semnal: ");
-        display.print(rssi);
-        display.println(" dBm");
-      } else {
-        display.println("Status: OFFLINE");
-        display.print("IP: --");
-      }
-      break;
-    }
-
-    case 3: { // SISTEM
-      display.setCursor(32, 12);
-      display.print("SISTEM C3");
-      display.drawFastHLine(0, 22, 128, WHITE);
-
-      display.setCursor(0, 30);
-      display.print("Uptime:   ");
-      display.print(millis() / 1000);
-      display.println(" sec");
-
-      display.print("RAM Lib:  ");
-      display.print(ESP.getFreeHeap() / 1024);
-      display.println(" KB");
-
-      display.print("CPU Load: ");
-      if (t.cpuLoadPercent > 0) {
-        display.print(t.cpuLoadPercent);
-        display.println(" %");
-      } else {
-        display.println("--");
-      }
-      break;
-    }
-
-    case 4: {
-    display.clearDisplay();
-    
-    // Header discret
-    display.drawFastHLine(0, 10, 128, WHITE);
-    display.setCursor(0, 0);
-    display.printf("R:%d P:%d", (int)roll, (int)pitch);
-
-    // Centru Instrument
-    int cx = 64, cy = 40;
-    
-    // Limităm Pitch-ul vizual la +/- 20 pixeli
-    int pOffset = map(constrain((int)pitch, -60, 60), -60, 60, -20, 20);
-    float rRad = roll * M_PI / 180.0f;
-
-    // Calculăm capetele bării (lungime 30 pixeli)
-    int lx = 30;
-    int x0 = cx - cos(rRad) * lx;
-    int y0 = cy - sin(rRad) * lx + pOffset;
-    int x1 = cx + cos(rRad) * lx;
-    int y1 = cy + sin(rRad) * lx + pOffset;
-
-    // Desenăm "Gimbal-ul"
-    display.drawCircle(cx, cy, 3, WHITE);          // Avionul fix
-    display.drawLine(cx-5, cy, cx+5, cy, WHITE);   // Aripile avionului
-    display.drawLine(x0, y0, x1, y1, WHITE);       // Orizontul mobil
-    
-    // Cadru de referință
-    display.drawRect(34, 15, 60, 48, WHITE);
-    
-    break;
-}
-    
   }
 
   display.display();
-  oledClearRefreshFlag();
-}
-
-void oledRequestRefresh() {
-  oledRefreshNeeded = true;
-}
-
-bool oledNeedsRefresh() {
-  return oledRefreshNeeded;
-}
-
-void oledClearRefreshFlag() {
-  oledRefreshNeeded = false;
 }
