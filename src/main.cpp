@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include <Wire.h>
 
+#include "debug_manager.h"
+#include "cpu_manager.h"
+#include "connection_manager.h"
 #include "ble_service.h"
 
 #define I2C_SDA 8
@@ -15,54 +18,65 @@ void oledManagerUpdate();
 void buttonManagerInit();
 void buttonManagerUpdate();
 
-void wifiManagerInit();
-void wifiManagerUpdate();
-
-void apiServerInit();
-void apiServerUpdate();
-
 void cpuTask();
 
+void taskSensorsUi(void* parameter) {
+  for (;;) {
+    buttonManagerUpdate();
+    sensorManagerUpdate();
+    cpuTask();
+    oledManagerUpdate();
+
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+}
+
+void taskConnection(void* parameter) {
+  for (;;) {
+    connectionManagerUpdate();
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+}
+
+void taskDebug(void* parameter) {
+  for (;;) {
+    debugManagerUpdate();
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
+
 void setup() {
-  Serial.begin(115200);
-  delay(500);
+  debugManagerInit();
 
-  Serial.println("BOOT START");
-
+  debugPrintCheckpoint("Wire init start");
   Wire.begin(I2C_SDA, I2C_SCL);
-  Serial.println("I2C OK");
+  Wire.setClock(400000);
+  Wire.setTimeOut(30);
+  debugPrintCheckpoint("Wire init done");
 
+  debugPrintCheckpoint("Buttons init start");
   buttonManagerInit();
-  Serial.println("BUTTON OK");
+  debugPrintCheckpoint("Buttons init done");
 
+  debugPrintCheckpoint("OLED init start");
   oledManagerInit();
-  Serial.println("OLED OK");
+  debugPrintCheckpoint("OLED init done");
 
-  wifiManagerInit();
-  Serial.println("WIFI OK");
-
-  apiServerInit();
-  Serial.println("API OK");
-
+  debugPrintCheckpoint("Sensors init start");
   sensorManagerInit();
-  Serial.println("SENSOR OK");
+  debugPrintCheckpoint("Sensors init done");
 
-  // BLE dezactivat temporar pentru test reboot
-  // bleServiceInit();
-  // Serial.println("BLE OK");
+  debugPrintCheckpoint("Connection init start");
+  connectionManagerInit();
+  debugPrintCheckpoint("Connection init done");
 
-  oledManagerUpdate();
+  xTaskCreate(taskSensorsUi, "SensorsUI", 10000, NULL, 3, NULL);
+  xTaskCreate(taskConnection, "Connection", 12000, NULL, 1, NULL);
+  xTaskCreate(taskDebug, "Debug", 4096, NULL, 1, NULL);
 
-  Serial.println("SETUP DONE");
+  debugPrintCheckpoint("All tasks created");
 }
 
 void loop() {
-  buttonManagerUpdate();
-  sensorManagerUpdate();
-  cpuTask();
-  wifiManagerUpdate();
-  oledManagerUpdate();
-  apiServerUpdate();
-  bleServiceUpdate();
-  delay(2);
+  vTaskDelay(pdMS_TO_TICKS(1000));
 }

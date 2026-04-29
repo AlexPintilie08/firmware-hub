@@ -1,61 +1,70 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include "ble_service.h"
 #include "system_state.h"
 
-static NimBLEServer* server = nullptr;
-static NimBLECharacteristic* dataChar = nullptr;
+bool bleConnected = false;
 
- bool bleConnected = false;
+static NimBLEServer* bleServer = nullptr;
+static NimBLECharacteristic* dataChar = nullptr;
+static bool bleInitialized = false;
 static unsigned long lastBleSend = 0;
 
-#define BLE_SERVICE_UUID   "7b4a0001-9c7d-4f9a-bb2f-esp32c3a10001"
-#define BLE_DATA_UUID      "7b4a0002-9c7d-4f9a-bb2f-esp32c3a10002"
+#define BLE_SERVICE_UUID "7b4a0001-9c7d-4f9a-bb2f-a1b2c3d4e001"
+#define BLE_DATA_UUID    "7b4a0002-9c7d-4f9a-bb2f-a1b2c3d4e002"
+
+#define BLE_SEND_INTERVAL_MS 50
 
 class ServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* pServer) {
+  void onConnect(NimBLEServer* server) {
     bleConnected = true;
+    Serial.println("BLE connected");
   }
 
-  void onDisconnect(NimBLEServer* pServer) {
+  void onDisconnect(NimBLEServer* server) {
     bleConnected = false;
-    NimBLEDevice::startAdvertising();
+    Serial.println("BLE disconnected");
+
+    if (bleInitialized) {
+      NimBLEDevice::startAdvertising();
+    }
   }
 };
 
+static String boolJson(bool v) {
+  return v ? "true" : "false";
+}
+
 static String buildBlePayload() {
-  String s = "{";
+  String json = "{";
 
-  s += "\"st\":\"" + alertLevel + "\",";
-  s += "\"risk\":" + String(riskScore) + ",";
-  s += "\"bpm\":" + String(bpmAvg, 0) + ",";
-  s += "\"spo2\":" + String(spo2) + ",";
-  s += "\"temp\":" + String(bodyTempC, 1) + ",";
-  s += "\"bat\":" + String(batteryPercent) + ",";
+  json += "\"bpm\":" + String(bpmAvg > 0 ? bpmAvg : bpm, 0) + ",";
+  json += "\"spo2\":" + String(spo2) + ",";
+  json += "\"temp\":" + String(bodyTempC, 1) + ",";
+  json += "\"risk\":" + String(riskScore) + ",";
 
-  s += "\"ax\":" + String(accX, 2) + ",";
-  s += "\"ay\":" + String(accY, 2) + ",";
-  s += "\"az\":" + String(accZ, 2) + ",";
+  json += "\"ax\":" + String(dynX, 3) + ",";
+  json += "\"ay\":" + String(dynY, 3) + ",";
+  json += "\"az\":" + String(dynZ, 3) + ",";
+  json += "\"at\":" + String(accTotal, 3);
 
-  s += "\"gx\":" + String(gyroX, 0) + ",";
-  s += "\"gy\":" + String(gyroY, 0) + ",";
-  s += "\"gz\":" + String(gyroZ, 0) + ",";
+  json += "}";
 
-  s += "\"fall\":" + String(freeFallRisk ? 1 : 0) + ",";
-  s += "\"rot\":" + String(excessiveRotation ? 1 : 0) + ",";
-  s += "\"nomove\":" + String(noMovement ? 1 : 0);
-
-  s += "}";
-
-  return s;
+  return json;
 }
 
 void bleServiceInit() {
-  NimBLEDevice::init("Parachute-Wearable");
+  if (bleInitialized) return;
 
-  server = NimBLEDevice::createServer();
-  server->setCallbacks(new ServerCallbacks());
+  Serial.println("BLE init");
 
-  NimBLEService* service = server->createService(BLE_SERVICE_UUID);
+  NimBLEDevice::init("ESP-WEAR");
+  NimBLEDevice::setPower(ESP_PWR_LVL_P6);
+
+  bleServer = NimBLEDevice::createServer();
+  bleServer->setCallbacks(new ServerCallbacks());
+
+  NimBLEService* service = bleServer->createService(BLE_SERVICE_UUID);
 
   dataChar = service->createCharacteristic(
     BLE_DATA_UUID,
@@ -64,26 +73,63 @@ void bleServiceInit() {
 
   dataChar->setValue("ready");
 
-  service->start();
 
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
   advertising->addServiceUUID(BLE_SERVICE_UUID);
 
   NimBLEDevice::startAdvertising();
 
-  Serial.println("BLE NimBLE started");
+  bleInitialized = true;
 }
 
 void bleServiceUpdate() {
-  if (!bleConnected || dataChar == nullptr) return;
+  static unsigned long lastPrint = 0;
 
-  unsigned long now = millis();
+  if (!bleInitialized) return;
+  if (!dataChar) return;
 
-  if (now - lastBleSend < 1000) return;
-  lastBleSend = now;
+  bool realConnected = false;
+
+  if (bleServer != nullptr) {
+    realConnected = bleServer->getConnectedCount() > 0;
+  }
+
+  bleConnected = realConnected;
+
+  if (millis() - lastPrint > 1000) {
+    lastPrint = millis();
+    Serial.print("BLE update | connected=");
+    Serial.print(bleConnected ? "YES" : "NO");
+    Serial.print(" | clients=");
+    Serial.print(bleServer ? bleServer->getConnectedCount() : 0);
+    Serial.print(" | dataChar=");
+    Serial.println(dataChar ? "OK" : "NULL");
+  }
+
+  if (!bleConnected) return;
+
+  if (millis() - lastBleSend < BLE_SEND_INTERVAL_MS) return;
+  lastBleSend = millis();
 
   String payload = buildBlePayload();
 
+  Serial.print("BLE SEND: ");
+  Serial.println(payload);
+
   dataChar->setValue(payload.c_str());
   dataChar->notify();
+}
+
+void bleServiceStop() {
+  if (!bleInitialized) return;
+
+  Serial.println("BLE stop");
+
+  NimBLEDevice::stopAdvertising();
+
+  if (bleServer && bleConnected) {
+    bleServer->disconnect(0);
+  }
+
+  bleConnected = false;
 }

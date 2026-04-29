@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../../../../hs esp hub"
+		},
+		{
+			"name": "ESP_HUB",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}

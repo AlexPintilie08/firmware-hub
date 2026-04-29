@@ -1,31 +1,36 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClient.h>
 #include <HTTPClient.h>
 #include "system_state.h"
 
-const char* BACKEND_URL = "http://172.20.10.4:4000/api/esp-update";
-
+const char* BACKEND_URL = "http://192.168.0.113:4000/api/esp-update";
 static unsigned long lastBackendSend = 0;
 
-void apiServerInit() {
-  Serial.println("API backend client ready");
-}
-
-String boolJson(bool value) {
+static String boolJson(bool value) {
   return value ? "true" : "false";
 }
 
+void apiServerInit() {
+  Serial.println("API backend ready");
+}
+
 void apiServerUpdate() {
-  unsigned long now = millis();
-
-  if (now - lastBackendSend < 1500) return;
-  lastBackendSend = now;
-
   if (WiFi.status() != WL_CONNECTED) return;
 
+  if (millis() - lastBackendSend < 2000) return;
+  lastBackendSend = millis();
+
+  WiFiClient client;
   HTTPClient http;
-  http.setTimeout(600);
-  http.begin(BACKEND_URL);
+
+  http.setTimeout(300);
+
+  if (!http.begin(client, BACKEND_URL)) {
+    Serial.println("HTTP begin failed");
+    return;
+  }
+
   http.addHeader("Content-Type", "application/json");
 
   String json = "{";
@@ -44,9 +49,9 @@ void apiServerUpdate() {
   json += "},";
 
   json += "\"motion\":{";
-  json += "\"accX\":" + String(accX, 2) + ",";
-  json += "\"accY\":" + String(accY, 2) + ",";
-  json += "\"accZ\":" + String(accZ, 2) + ",";
+  json += "\"accX\":" + String(dynX, 2) + ",";
+  json += "\"accY\":" + String(dynY, 2) + ",";
+  json += "\"accZ\":" + String(dynZ, 2) + ",";
   json += "\"gyroX\":" + String(gyroX, 1) + ",";
   json += "\"gyroY\":" + String(gyroY, 1) + ",";
   json += "\"gyroZ\":" + String(gyroZ, 1) + ",";
@@ -82,7 +87,6 @@ void apiServerUpdate() {
   json += "}";
 
   int code = http.POST(json);
-
   Serial.print("POST backend: ");
   Serial.println(code);
 
