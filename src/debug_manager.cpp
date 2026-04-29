@@ -1,7 +1,11 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_system.h>
+
 #include "debug_manager.h"
+#include "connection_manager.h"
+#include "ble_service.h"
+#include "system_state.h"
 
 static unsigned long lastDebugPrint = 0;
 
@@ -42,7 +46,7 @@ void debugManagerInit() {
   delay(800);
 
   Serial.println();
-  Serial.println("===== SYSTEM BOOT =====");
+  Serial.println("===== SKYSAFE WEARABLE BOOT =====");
 
   debugPrintResetReason();
 
@@ -55,8 +59,26 @@ void debugManagerUpdate() {
 
   Serial.print("Alive | uptime=");
   Serial.print(millis() / 1000);
+
   Serial.print("s | heap=");
   Serial.print(ESP.getFreeHeap());
+
+  Serial.print(" | mode=");
+  Serial.print(connectionManagerModeName());
+
+  Serial.print(" | ble=");
+  Serial.print(bleConnected ? "connected" : "idle");
+
   Serial.print(" | wifi=");
-  Serial.println(WiFi.status());
+  Serial.print(WiFi.status());
+
+  Serial.print(" | cpu=");
+  Serial.print(cpuLoad);
+  Serial.print("%");
+
+  Serial.print(" | risk=");
+  Serial.print(riskScore);
+
+  Serial.print(" | alert=");
+  Serial.println(alertLevel);
 }

@@ -23,6 +23,7 @@ float accZ = 0;
 float gyroX = 0;
 float gyroY = 0;
 float gyroZ = 0;
+
 float dynX = 0;
 float dynY = 0;
 float dynZ = 0;
@@ -42,6 +43,10 @@ int riskScore = 0;
 
 // SYSTEM
 int cpuLoad = 0;
+
+// CONNECTION / TIMING
+unsigned long lastSensorPacketMs = 0;
+String activeConnection = "BOOT";
 
 // UI
 int page = 0;

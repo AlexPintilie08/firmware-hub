@@ -1,7 +1,8 @@
 #pragma once
 
 void bleServiceInit();
-void bleServiceUpdate();
+void bleServiceStart();
 void bleServiceStop();
+void bleServiceUpdate();
 
 extern bool bleConnected;

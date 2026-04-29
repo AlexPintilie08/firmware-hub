@@ -5,7 +5,12 @@
 #include "system_state.h"
 
 const char* BACKEND_URL = "http://192.168.0.113:4000/api/esp-update";
+
 static unsigned long lastBackendSend = 0;
+
+// Wi-Fi fallback live. 250ms = 4Hz, stabil pentru HTTP.
+// Pentru BLE accelerometrul va merge separat la 50ms.
+#define BACKEND_SEND_INTERVAL_MS 250
 
 static String boolJson(bool value) {
   return value ? "true" : "false";
@@ -18,13 +23,14 @@ void apiServerInit() {
 void apiServerUpdate() {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  if (millis() - lastBackendSend < 2000) return;
+  if (millis() - lastBackendSend < BACKEND_SEND_INTERVAL_MS) return;
   lastBackendSend = millis();
 
   WiFiClient client;
   HTTPClient http;
 
-  http.setTimeout(300);
+  http.setTimeout(250);
+  http.setReuse(false);
 
   if (!http.begin(client, BACKEND_URL)) {
     Serial.println("HTTP begin failed");
@@ -33,29 +39,32 @@ void apiServerUpdate() {
 
   http.addHeader("Content-Type", "application/json");
 
-  String json = "{";
+  String json;
+  json.reserve(1200);
+
+  json = "{";
 
   json += "\"wearable\":{";
   json += "\"status\":\"" + alertLevel + "\",";
   json += "\"battery\":" + String(batteryPercent) + ",";
-  json += "\"connection\":\"online\"";
+  json += "\"connection\":\"wifi-backup\"";
   json += "},";
 
   json += "\"physiology\":{";
-  json += "\"bpm\":" + String(bpmAvg, 0) + ",";
+  json += "\"bpm\":" + String(bpmAvg > 0 ? bpmAvg : bpm, 0) + ",";
   json += "\"spo2\":" + String(spo2) + ",";
   json += "\"bodyTemperature\":" + String(bodyTempC, 1) + ",";
   json += "\"stressLevel\":\"" + stressLevel + "\"";
   json += "},";
 
   json += "\"motion\":{";
-  json += "\"accX\":" + String(dynX, 2) + ",";
-  json += "\"accY\":" + String(dynY, 2) + ",";
-  json += "\"accZ\":" + String(dynZ, 2) + ",";
+  json += "\"accX\":" + String(dynX, 3) + ",";
+  json += "\"accY\":" + String(dynY, 3) + ",";
+  json += "\"accZ\":" + String(dynZ, 3) + ",";
   json += "\"gyroX\":" + String(gyroX, 1) + ",";
   json += "\"gyroY\":" + String(gyroY, 1) + ",";
   json += "\"gyroZ\":" + String(gyroZ, 1) + ",";
-  json += "\"accTotal\":" + String(accTotal, 2) + ",";
+  json += "\"accTotal\":" + String(accTotal, 3) + ",";
   json += "\"parachuteOpened\":" + boolJson(parachuteOpened) + ",";
   json += "\"positionChanged\":" + boolJson(positionChanged) + ",";
   json += "\"freeFallRisk\":" + boolJson(freeFallRisk) + ",";
@@ -87,8 +96,11 @@ void apiServerUpdate() {
   json += "}";
 
   int code = http.POST(json);
-  Serial.print("POST backend: ");
-  Serial.println(code);
+
+  if (code <= 0) {
+    Serial.print("POST backend failed: ");
+    Serial.println(code);
+  }
 
   http.end();
 }

@@ -4,44 +4,57 @@
 const char* WIFI_SSID = "Net";
 const char* WIFI_PASSWORD = "12345678";
 
+#define WIFI_CONNECT_TIMEOUT_MS 8000
+#define WIFI_RETRY_INTERVAL_MS 10000
+
+static unsigned long lastRetry = 0;
+static bool wifiConfigured = false;
+
 void wifiManagerInit() {
-  Serial.println("\n--- CONFIGURARE WIFI STA ---");
+  Serial.println("\n--- WIFI STA INIT ---");
 
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
   WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
+
+  wifiConfigured = true;
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  int tries = 0;
-  while (WiFi.status() != WL_CONNECTED && tries < 30) {
-    delay(500);
+  unsigned long start = millis();
+
+  while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_CONNECT_TIMEOUT_MS) {
+    delay(250);
     Serial.print(".");
-    tries++;
   }
 
   Serial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("WiFi conectat cu succes!");
+    Serial.println("WiFi connected");
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
   } else {
-    Serial.println("Eroare la conectarea WiFi.");
+    Serial.println("WiFi not connected yet");
   }
+
+  lastRetry = millis();
 }
 
 void wifiManagerUpdate() {
-  static unsigned long lastRetry = 0;
+  if (!wifiConfigured) return;
 
   if (WiFi.status() == WL_CONNECTED) return;
 
-  if (millis() - lastRetry < 10000) return;
+  if (millis() - lastRetry < WIFI_RETRY_INTERVAL_MS) return;
   lastRetry = millis();
 
   Serial.println("WiFi retry...");
+
   WiFi.disconnect(false);
-  delay(100);
+  delay(50);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
 

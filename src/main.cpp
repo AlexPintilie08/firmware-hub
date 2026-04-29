@@ -20,6 +20,12 @@ void buttonManagerUpdate();
 
 void cpuTask();
 
+/*
+  TASK RAPID:
+  - senzori
+  - accelerometru
+  - BLE (IMPORTANT pentru lag mic)
+*/
 void taskSensorsUi(void* parameter) {
   for (;;) {
     buttonManagerUpdate();
@@ -27,17 +33,30 @@ void taskSensorsUi(void* parameter) {
     cpuTask();
     oledManagerUpdate();
 
-    vTaskDelay(pdMS_TO_TICKS(20));
+    // 🔥 AICI e cheia pentru live accelerometru pe telefon
+    connectionManagerFastUpdate();
+
+    vTaskDelay(pdMS_TO_TICKS(20)); // ~50Hz
   }
 }
 
+/*
+  TASK LENT:
+  - WiFi
+  - backend HTTP
+*/
 void taskConnection(void* parameter) {
   for (;;) {
+    connectionManagerFastUpdate();
     connectionManagerUpdate();
+
     vTaskDelay(pdMS_TO_TICKS(20));
   }
 }
 
+/*
+  DEBUG
+*/
 void taskDebug(void* parameter) {
   for (;;) {
     debugManagerUpdate();

@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
-
+extern unsigned long lastSensorPacketMs;
+extern String activeConnection;
 // HEALTH
 extern float bodyTempC;
 extern float bpm;

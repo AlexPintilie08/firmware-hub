@@ -7,9 +7,10 @@ enum ConnectionMode {
 
 void connectionManagerInit();
 void connectionManagerUpdate();
+void connectionManagerFastUpdate();
 
-void connectionManagerToggleMode();
 void connectionManagerSetMode(ConnectionMode mode);
+void connectionManagerToggleMode();
 
 ConnectionMode connectionManagerGetMode();
 
@@ -17,3 +18,10 @@ bool connectionManagerIsBleMode();
 bool connectionManagerIsWifiMode();
 
 const char* connectionManagerModeName();
+
+// compatibilitate cod vechi
+ConnectionMode getConnectionMode();
+bool isWifiMode();
+bool isBleMode();
+void switchToWifiMode();
+void switchToBleMode();

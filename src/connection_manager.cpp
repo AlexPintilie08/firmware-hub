@@ -11,37 +11,55 @@ void apiServerInit();
 void apiServerUpdate();
 
 static ConnectionMode currentMode = CONNECTION_MODE_BLE;
-
 static bool wifiStarted = false;
 static bool bleStarted = false;
-
 static unsigned long lastModePrint = 0;
 
 static void startWifiStack() {
+  Serial.println("Starting WIFI stack...");
+
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+
   if (!wifiStarted) {
     wifiManagerInit();
     apiServerInit();
     wifiStarted = true;
+  } else if (WiFi.status() != WL_CONNECTED) {
+    WiFi.begin();
   }
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin();
+  Serial.println("WIFI stack ready");
 }
 
-static void stopWifiStack() {
-  WiFi.disconnect(true);
+static void stopWifiStackSoft() {
+  Serial.println("Soft stopping WIFI...");
+
+  WiFi.disconnect(false);
   WiFi.mode(WIFI_OFF);
-  delay(150);
+
+  Serial.println("WIFI soft stopped");
 }
 
 static void startBleStack() {
   Serial.println("Starting BLE stack...");
-  bleServiceInit();
-  bleStarted = true;
+
+  if (!bleStarted) {
+    bleServiceInit();
+    bleStarted = true;
+  } else {
+    bleServiceStart();
+  }
+
+  Serial.println("BLE stack ready");
 }
 
-static void stopBleStack() {
-  bleServiceStop();
+static void stopBleStackSoft() {
+  Serial.println("Soft stopping BLE...");
+
+  bleConnected = false;
+
+  Serial.println("BLE soft stopped");
 }
 
 void connectionManagerInit() {
@@ -49,7 +67,7 @@ void connectionManagerInit() {
 
   currentMode = CONNECTION_MODE_BLE;
 
-  stopWifiStack();
+  stopWifiStackSoft();
   startBleStack();
 
   Serial.println("Connection manager: BLE mode");
@@ -61,15 +79,16 @@ void connectionManagerUpdate() {
     apiServerUpdate();
   }
 
-  if (currentMode == CONNECTION_MODE_BLE) {
-    bleServiceUpdate();
-  }
-
   if (millis() - lastModePrint > 5000) {
     lastModePrint = millis();
-
     Serial.print("Connection mode: ");
     Serial.println(connectionManagerModeName());
+  }
+}
+
+void connectionManagerFastUpdate() {
+  if (currentMode == CONNECTION_MODE_BLE) {
+    bleServiceUpdate();
   }
 }
 
@@ -79,11 +98,10 @@ void connectionManagerSetMode(ConnectionMode mode) {
   if (mode == CONNECTION_MODE_WIFI) {
     Serial.println("Switching to WIFI mode...");
 
-    stopBleStack();
-    delay(250);
+    stopBleStackSoft();
+    delay(100);
 
     currentMode = CONNECTION_MODE_WIFI;
-
     startWifiStack();
 
     Serial.println("WIFI mode active");
@@ -93,11 +111,10 @@ void connectionManagerSetMode(ConnectionMode mode) {
   if (mode == CONNECTION_MODE_BLE) {
     Serial.println("Switching to BLE mode...");
 
-    stopWifiStack();
-    delay(250);
+    stopWifiStackSoft();
+    delay(100);
 
     currentMode = CONNECTION_MODE_BLE;
-
     startBleStack();
 
     Serial.println("BLE mode active");
@@ -129,11 +146,6 @@ const char* connectionManagerModeName() {
   if (currentMode == CONNECTION_MODE_WIFI) return "WIFI";
   return "BLE";
 }
-
-/*
-  Compatibilitate cu codul vechi, dacă mai ai fișiere care apelează
-  getConnectionMode(), isWifiMode(), isBleMode(), switchToWifiMode(), switchToBleMode().
-*/
 
 ConnectionMode getConnectionMode() {
   return connectionManagerGetMode();

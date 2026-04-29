@@ -3,7 +3,9 @@
 #include <WiFi.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+
 #include "system_state.h"
+#include "connection_manager.h"
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -59,8 +61,11 @@ void drawTopBar(const char* title) {
   display.setCursor(2, 3);
   display.print(title);
 
+  display.setCursor(48, 3);
+  display.print(connectionManagerModeName());
+
   String pageText = String(page + 1) + "/" + String(PAGE_COUNT);
-  int pageX = 74 - pageText.length() * 3;
+  int pageX = 78 - pageText.length() * 3;
   display.setCursor(pageX, 3);
   display.print(pageText);
 
@@ -74,7 +79,25 @@ void drawTopBar(const char* title) {
 void drawBar(int x, int y, int w, int h, int percent) {
   percent = constrain(percent, 0, 100);
   display.drawRect(x, y, w, h, WHITE);
-  display.fillRect(x, y, map(percent, 0, 100, 0, w), h, WHITE);
+  display.fillRect(x + 1, y + 1, map(percent, 0, 100, 0, w - 2), h - 2, WHITE);
+}
+
+void drawSignedBar(int x, int y, int w, int h, float value, float maxAbs) {
+  value = constrain(value, -maxAbs, maxAbs);
+
+  int center = x + w / 2;
+  int halfW = w / 2;
+
+  display.drawRect(x, y, w, h, WHITE);
+  display.drawLine(center, y, center, y + h - 1, WHITE);
+
+  int fill = abs(value) / maxAbs * (halfW - 2);
+
+  if (value >= 0) {
+    display.fillRect(center + 1, y + 1, fill, h - 2, WHITE);
+  } else {
+    display.fillRect(center - fill, y + 1, fill, h - 2, WHITE);
+  }
 }
 
 void drawBigInt(int x, int y, int value, const char* unit) {
@@ -110,6 +133,7 @@ void pageStatus() {
 
   display.setCursor(0, 42);
   display.print("Predictie:");
+
   display.setCursor(0, 52);
   display.print(prediction);
 }
@@ -117,7 +141,7 @@ void pageStatus() {
 void pagePulse() {
   drawTopBar("PULS");
 
-  if (irValue < 25000) {
+  if (irValue < 8000) {
     display.setCursor(0, 24);
     display.print("Pune degetul");
     display.setCursor(0, 38);
@@ -125,18 +149,20 @@ void pagePulse() {
     return;
   }
 
-  if (bpmAvg <= 0) {
+  float shownBpm = bpmAvg > 0 ? bpmAvg : bpm;
+
+  if (shownBpm <= 0) {
     display.setCursor(0, 30);
     display.print("Calibrare...");
     return;
   }
 
-  drawBigInt(25, 24, (int)bpmAvg, " BPM");
+  drawBigInt(25, 24, (int)shownBpm, " BPM");
 
   display.setCursor(0, 50);
-  if (bpmAvg < 55) display.print("puls scazut");
-  else if (bpmAvg <= 95) display.print("puls normal");
-  else if (bpmAvg <= 125) display.print("puls crescut");
+  if (shownBpm < 55) display.print("puls scazut");
+  else if (shownBpm <= 95) display.print("puls normal");
+  else if (shownBpm <= 125) display.print("puls crescut");
   else display.print("stres/efort mare");
 }
 
@@ -172,26 +198,27 @@ void pageAccel() {
   drawTopBar("ACCEL");
 
   display.setCursor(0, 17);
-  display.print("X:");
+  display.print("AX");
+  display.setCursor(18, 17);
   display.print(dynX, 2);
-  display.print(" Y:");
-  display.print(dynY, 2);
+  drawSignedBar(64, 17, 60, 7, dynX, 2.0);
 
   display.setCursor(0, 29);
-  display.print("Z:");
-  display.print(dynZ, 2);
-  display.print(" G:");
-  display.print(accTotal, 2);
-
-  float dyn = abs(accTotal - 1.0);
+  display.print("AY");
+  display.setCursor(18, 29);
+  display.print(dynY, 2);
+  drawSignedBar(64, 29, 60, 7, dynY, 2.0);
 
   display.setCursor(0, 41);
-  display.print("Dinamic:");
-  display.print(dyn, 2);
-  display.print("g");
+  display.print("AZ");
+  display.setCursor(18, 41);
+  display.print(dynZ, 2);
+  drawSignedBar(64, 41, 60, 7, dynZ, 2.0);
 
-  display.setCursor(0, 53);
-  display.print(positionChanged ? "pozitie schimbata" : "pozitie stabila");
+  display.setCursor(0, 54);
+  display.print("TOT:");
+  display.print(accTotal, 2);
+  display.print(positionChanged ? " MOVE" : " STABLE");
 }
 
 void pageGyro() {
@@ -267,14 +294,23 @@ void pageNetwork() {
   drawTopBar("RETEA");
 
   display.setCursor(0, 18);
-  display.print(WiFi.status() == WL_CONNECTED ? "WiFi ONLINE" : "WiFi OFFLINE");
+  display.print("Mode:");
+  display.print(connectionManagerModeName());
 
   display.setCursor(0, 31);
-  display.print("RSSI:");
-  display.print(WiFi.RSSI());
+  if (connectionManagerIsWifiMode()) {
+    display.print(WiFi.status() == WL_CONNECTED ? "WiFi ONLINE" : "WiFi OFFLINE");
+  } else {
+    display.print(bleConnected ? "BLE CONNECTED" : "BLE WAITING");
+  }
 
   display.setCursor(0, 44);
-  display.print(WiFi.localIP());
+  if (connectionManagerIsWifiMode()) {
+    display.print("IP:");
+    display.print(WiFi.localIP());
+  } else {
+    display.print("Device: SKYSAFE-WEAR");
+  }
 }
 
 void pageSystem() {
@@ -306,7 +342,7 @@ void oledManagerInit() {
   display.setTextColor(WHITE);
   display.setTextSize(1);
   display.setCursor(0, 20);
-  display.println("Wearable boot...");
+  display.println("SKYSAFE boot...");
   display.display();
 
   lastDraw = 0;
@@ -318,7 +354,13 @@ void oledManagerUpdate() {
 
   static bool firstDraw = true;
 
-  if (!firstDraw && millis() - lastDraw < 250) return;
+  unsigned long refreshMs = 250;
+
+  if (page == 4 || page == 5) {
+    refreshMs = 80;
+  }
+
+  if (!firstDraw && millis() - lastDraw < refreshMs) return;
 
   firstDraw = false;
   lastDraw = millis();

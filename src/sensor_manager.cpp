@@ -9,6 +9,10 @@
 #define BMI160_ADDR_1 0x68
 #define BMI160_ADDR_2 0x69
 
+#define MOTION_INTERVAL_MS 10
+#define SLOW_SENSOR_INTERVAL_MS 250
+#define MAX30102_INTERVAL_MS 8
+
 Adafruit_INA219 ina219;
 MAX30105 max30102;
 
@@ -76,15 +80,25 @@ static bool readBytes(uint8_t addr, uint8_t reg, uint8_t* buffer, uint8_t len) {
 static float readNTC() {
   int adc = analogRead(NTC_PIN);
 
-  if (adc <= 0 || adc >= 4095) return filteredTemp;
+  if (adc <= 0 || adc >= 4095) {
+    return filteredTemp;
+  }
 
   float r = 10000.0 * ((4095.0 / adc) - 1.0);
+
+  if (!isfinite(r) || r <= 0) {
+    return filteredTemp;
+  }
 
   float t = log(r / 10000.0);
   t /= 3950.0;
   t += 1.0 / (25.0 + 273.15);
   t = 1.0 / t;
   t -= 273.15;
+
+  if (!isfinite(t)) {
+    return filteredTemp;
+  }
 
   return t;
 }
@@ -112,20 +126,29 @@ static bool initBMI160() {
   writeReg8(bmiAddr, 0x7E, 0x15);
   delay(120);
 
-  // ACC config: 100Hz, normal mode
+  // accelerometru: 100Hz, normal mode
   writeReg8(bmiAddr, 0x40, 0x28);
-  // ACC range: +/-2g
+
+  // range accelerometru: +/-2g
   writeReg8(bmiAddr, 0x41, 0x03);
 
-  // GYRO config: 100Hz, normal mode
+  // giroscop: 100Hz, normal mode
   writeReg8(bmiAddr, 0x42, 0x28);
-  // GYRO range: +/-2000 dps
+
+  // range gyro: +/-2000 dps
   writeReg8(bmiAddr, 0x43, 0x00);
 
   return true;
 }
 
-static bool readBMI160Raw(float& ax, float& ay, float& az, float& gx, float& gy, float& gz) {
+static bool readBMI160Raw(
+  float& ax,
+  float& ay,
+  float& az,
+  float& gx,
+  float& gy,
+  float& gz
+) {
   if (!bmiOk) return false;
 
   uint8_t data[12];
@@ -199,6 +222,11 @@ static void calibrateBMI160() {
   gY = 0;
   gZ = 1;
 
+  dynX = 0;
+  dynY = 0;
+  dynZ = 0;
+  accTotal = 0;
+
   Serial.println("BMI160 calibration done");
 }
 
@@ -208,7 +236,9 @@ static void readBMI160() {
   float axRaw, ayRaw, azRaw;
   float gxRaw, gyRaw, gzRaw;
 
-  if (!readBMI160Raw(axRaw, ayRaw, azRaw, gxRaw, gyRaw, gzRaw)) return;
+  if (!readBMI160Raw(axRaw, ayRaw, azRaw, gxRaw, gyRaw, gzRaw)) {
+    return;
+  }
 
   gyroX = gxRaw - gyroOffsetX;
   gyroY = gyRaw - gyroOffsetY;
@@ -218,25 +248,32 @@ static void readBMI160() {
   accY = ayRaw - accOffsetY;
   accZ = azRaw - accOffsetZ;
 
-  // low-pass gravity estimate
-  gX = 0.92 * gX + 0.08 * accX;
-  gY = 0.92 * gY + 0.08 * accY;
-  gZ = 0.92 * gZ + 0.08 * accZ;
+  // Gravity estimate mai rapid ca să nu ai lag mare.
+  // Valorile dynX/Y/Z sunt accelerația dinamică, fără gravitație.
+  gX = 0.75 * gX + 0.25 * accX;
+  gY = 0.75 * gY + 0.25 * accY;
+  gZ = 0.75 * gZ + 0.25 * accZ;
 
   dynX = accX - gX;
   dynY = accY - gY;
   dynZ = accZ - gZ;
 
   float rawTotal = sqrt(accX * accX + accY * accY + accZ * accZ);
-  accTotal = sqrt(dynX * dynX + dynY * dynY + dynZ * dynZ);
+  float dynMag = sqrt(dynX * dynX + dynY * dynY + dynZ * dynZ);
 
-  positionChanged = accTotal > 0.08 || abs(gyroX) > 35 || abs(gyroY) > 35 || abs(gyroZ) > 35;
+  accTotal = 0.6 * accTotal + 0.4 * dynMag;
+
+  positionChanged =
+    accTotal > 0.05 ||
+    abs(gyroX) > 20 ||
+    abs(gyroY) > 20 ||
+    abs(gyroZ) > 20;
 
   if (positionChanged) {
     lastMovementTime = millis();
   }
 
-  freeFallRisk = rawTotal < 0.35;
+  freeFallRisk = rawTotal < 0.50;
 
   excessiveRotation =
     abs(gyroX) > 450 ||
@@ -245,7 +282,7 @@ static void readBMI160() {
 
   noMovement = millis() - lastMovementTime > 6000;
 
-  // demo logic: opening shock usually appears as strong acceleration spike
+  // demo logic: șoc mare la deschidere parașută
   parachuteOpened = accTotal > 1.2;
 }
 
@@ -264,7 +301,7 @@ static void resetHeartBuffers() {
 static void readMAX30102() {
   if (!maxOk) return;
 
-  if (millis() - lastMaxRead < 8) return;
+  if (millis() - lastMaxRead < MAX30102_INTERVAL_MS) return;
   lastMaxRead = millis();
 
   long irRaw = max30102.getIR();
@@ -309,7 +346,7 @@ static void readMAX30102() {
 
           if (count > 0) {
             float avg = (float)sum / count;
-            bpmAvg = (bpmAvg == 0) ? avg : (0.75 * avg + 0.25 * bpmAvg);
+            bpmAvg = (bpmAvg == 0) ? avg : (0.6 * avg + 0.4 * bpmAvg);
           }
         }
       }
@@ -344,9 +381,11 @@ static void readMAX30102() {
 static void updateRisk() {
   riskScore = 0;
 
-  if (bpmAvg > 145) riskScore += 35;
-  else if (bpmAvg > 120) riskScore += 20;
-  else if (bpmAvg > 95) riskScore += 10;
+  float shownBpm = bpmAvg > 0 ? bpmAvg : bpm;
+
+  if (shownBpm > 145) riskScore += 35;
+  else if (shownBpm > 120) riskScore += 20;
+  else if (shownBpm > 95) riskScore += 10;
 
   if (spo2 > 0 && spo2 < 90) riskScore += 35;
   else if (spo2 > 0 && spo2 < 94) riskScore += 20;
@@ -373,9 +412,9 @@ static void updateRisk() {
     prediction = "normal";
   }
 
-  if (bpmAvg > 140 || (spo2 > 0 && spo2 < 92) || bodyTempC > 38.2) {
+  if (shownBpm > 140 || (spo2 > 0 && spo2 < 92) || bodyTempC > 38.2) {
     stressLevel = "RIDICAT";
-  } else if (bpmAvg > 105 || bodyTempC > 37.4) {
+  } else if (shownBpm > 105 || bodyTempC > 37.4) {
     stressLevel = "MEDIU";
   } else {
     stressLevel = "NORMAL";
@@ -387,8 +426,11 @@ void sensorManagerInit() {
 
   inaOk = ina219.begin();
 
-  if (inaOk) Serial.println("INA219 OK");
-  else Serial.println("INA219 FAIL - disabled");
+  if (inaOk) {
+    Serial.println("INA219 OK");
+  } else {
+    Serial.println("INA219 FAIL - disabled");
+  }
 
   maxOk = max30102.begin(Wire, I2C_SPEED_FAST);
 
@@ -419,25 +461,40 @@ void sensorManagerInit() {
 
   lastMovementTime = millis();
   lastPowerSample = millis();
+  lastMotionRead = millis();
+  lastSlowSensorRead = millis();
+  lastMaxRead = millis();
+
+  updateRisk();
 }
 
 void sensorManagerUpdate() {
   readMAX30102();
 
-  // motion rapid: 50 Hz
-  if (millis() - lastMotionRead >= 20) {
+  // Motion rapid: 100Hz max.
+  // Task-ul tău rulează la 20ms, deci practic vei avea 50Hz stabil,
+  // iar dacă micșorezi task delay la 10ms, senzorul suportă.
+  if (millis() - lastMotionRead >= MOTION_INTERVAL_MS) {
     lastMotionRead = millis();
     readBMI160();
     updateRisk();
   }
 
-  // senzori lenți: 4 Hz
-  if (millis() - lastSlowSensorRead < 250) return;
+  // Senzori lenți: NTC + INA219 la 4Hz.
+  if (millis() - lastSlowSensorRead < SLOW_SENSOR_INTERVAL_MS) {
+    return;
+  }
+
   lastSlowSensorRead = millis();
 
   float ntc = readNTC();
 
-  filteredTemp = 0.1 * ntc + 0.9 * filteredTemp;
+  // Temperatură mai stabilă și mai puțin falsă.
+  // Dacă valoarea e complet aberantă, păstrăm ultima valoare bună.
+  if (ntc > 15.0 && ntc < 50.0) {
+    filteredTemp = 0.2 * ntc + 0.8 * filteredTemp;
+  }
+
   bodyTempC = filteredTemp;
 
   if (inaOk) {
